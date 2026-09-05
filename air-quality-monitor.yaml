@@ -1,0 +1,656 @@
+esphome:
+  name: air-quality-monitor
+  friendly_name: Air Quality Monitor
+
+esp32:
+  variant: esp32
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+logger:
+
+# ============================================================
+# HOME ASSISTANT API
+# ============================================================
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+
+# ============================================================
+# OTA UPDATES
+# ============================================================
+
+ota:
+  - platform: esphome
+
+
+# ============================================================
+# WI-FI
+# ============================================================
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Backup hotspot if normal Wi-Fi connection fails
+  ap:
+    ssid: "Air-Quality-Monitor Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+
+# ============================================================
+# ESP32 WEB SERVER
+# ============================================================
+
+web_server:
+  port: 80
+  auth:
+    username: AQI-Dashboard
+    password: !secret air_quality_monitor__web_password
+
+
+# ============================================================
+# I2C
+# BME680 + OLED
+# ============================================================
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: true
+  frequency: 400kHz
+
+
+# ============================================================
+# UART
+# PMS7003
+# ============================================================
+
+uart:
+  id: pms_uart
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 9600
+
+
+# ============================================================
+# OLED FONT
+# ============================================================
+
+font:
+  - file: "gfonts://Roboto"
+    id: main_font
+    size: 14
+
+
+# ============================================================
+# SCANNING ANIMATION
+# ============================================================
+
+globals:
+  - id: scanning_step
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+
+# ============================================================
+# SENSORS
+# ============================================================
+
+sensor:
+
+  # ----------------------------------------------------------
+  # BME680
+  # ----------------------------------------------------------
+
+  - platform: bme680
+    address: 0x76
+    update_interval: 15s
+
+    temperature:
+      name: "Temperature"
+      id: temperature
+
+
+    humidity:
+      name: "Humidity"
+      id: humidity
+
+
+  # ----------------------------------------------------------
+  # PMS7003
+  # ----------------------------------------------------------
+
+  - platform: pmsx003
+    type: PMSX003
+    uart_id: pms_uart
+    update_interval: 30s
+
+
+    pm_2_5:
+      name: "PM 2.5"
+      id: pm25
+
+    pm_10_0:
+      name: "PM 10.0"
+      id: pm10
+
+
+  # ==========================================================
+  # PM2.5 AQI SUB-INDEX
+  # ==========================================================
+
+  - platform: template
+    name: "PM2.5 AQI Sub-Index"
+    id: pm25_aqi
+    unit_of_measurement: ""
+    accuracy_decimals: 0
+    update_interval: 30s
+
+    lambda: |-
+
+      float pm = id(pm25).state;
+
+      // Wait for valid PM2.5 reading
+      if (isnan(pm)) {
+        return NAN;
+      }
+
+      float sub_index;
+
+      // ------------------------------------------------------
+      // PM2.5: 0 - 30
+      // AQI:   0 - 50
+      // ------------------------------------------------------
+
+      if (pm <= 30) {
+
+        sub_index =
+          ((50.0 - 0.0) / (30.0 - 0.0))
+          * (pm - 0.0)
+          + 0.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM2.5: 31 - 60
+      // AQI:   51 - 100
+      // ------------------------------------------------------
+
+      else if (pm <= 60) {
+
+        sub_index =
+          ((100.0 - 51.0) / (60.0 - 31.0))
+          * (pm - 31.0)
+          + 51.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM2.5: 61 - 90
+      // AQI:   101 - 200
+      // ------------------------------------------------------
+
+      else if (pm <= 90) {
+
+        sub_index =
+          ((200.0 - 101.0) / (90.0 - 61.0))
+          * (pm - 61.0)
+          + 101.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM2.5: 91 - 120
+      // AQI:   201 - 300
+      // ------------------------------------------------------
+
+      else if (pm <= 120) {
+
+        sub_index =
+          ((300.0 - 201.0) / (120.0 - 91.0))
+          * (pm - 91.0)
+          + 201.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM2.5: 121 - 250
+      // AQI:   301 - 400
+      // ------------------------------------------------------
+
+      else if (pm <= 250) {
+
+        sub_index =
+          ((400.0 - 301.0) / (250.0 - 121.0))
+          * (pm - 121.0)
+          + 301.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM2.5: > 250
+      // AQI: 401 - 500
+      // ------------------------------------------------------
+
+      else {
+
+        sub_index = 500;
+
+      }
+
+      return round(sub_index);
+
+
+  # ==========================================================
+  # PM10 AQI SUB-INDEX
+  # ==========================================================
+
+  - platform: template
+    name: "PM10 AQI Sub-Index"
+    id: pm10_aqi
+    unit_of_measurement: ""
+    accuracy_decimals: 0
+    update_interval: 30s
+
+    lambda: |-
+
+      float pm = id(pm10).state;
+
+      // Wait for valid PM10 reading
+      if (isnan(pm)) {
+        return NAN;
+      }
+
+      float sub_index;
+
+      // ------------------------------------------------------
+      // PM10: 0 - 50
+      // AQI:  0 - 50
+      // ------------------------------------------------------
+
+      if (pm <= 50) {
+
+        sub_index =
+          ((50.0 - 0.0) / (50.0 - 0.0))
+          * (pm - 0.0)
+          + 0.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM10: 51 - 100
+      // AQI:  51 - 100
+      // ------------------------------------------------------
+
+      else if (pm <= 100) {
+
+        sub_index =
+          ((100.0 - 51.0) / (100.0 - 51.0))
+          * (pm - 51.0)
+          + 51.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM10: 101 - 250
+      // AQI:  101 - 200
+      // ------------------------------------------------------
+
+      else if (pm <= 250) {
+
+        sub_index =
+          ((200.0 - 101.0) / (250.0 - 101.0))
+          * (pm - 101.0)
+          + 101.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM10: 251 - 350
+      // AQI:  201 - 300
+      // ------------------------------------------------------
+
+      else if (pm <= 350) {
+
+        sub_index =
+          ((300.0 - 201.0) / (350.0 - 251.0))
+          * (pm - 251.0)
+          + 201.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM10: 351 - 430
+      // AQI: 301 - 400
+      // ------------------------------------------------------
+
+      else if (pm <= 430) {
+
+        sub_index =
+          ((400.0 - 301.0) / (430.0 - 351.0))
+          * (pm - 351.0)
+          + 301.0;
+
+      }
+
+      // ------------------------------------------------------
+      // PM10: > 430
+      // AQI: 401 - 500
+      // ------------------------------------------------------
+
+      else {
+
+        sub_index = 500;
+
+      }
+
+      return round(sub_index);
+
+
+  # ==========================================================
+  # FINAL AQI
+  # ==========================================================
+  #
+  # AQI = HIGHEST VALID SUB-INDEX
+  #
+  # PM2.5 sub-index vs PM10 sub-index
+  #
+  # ==========================================================
+
+  - platform: template
+    name: "AQI"
+    id: aqi
+    unit_of_measurement: ""
+    accuracy_decimals: 0
+    update_interval: 30s
+
+    lambda: |-
+
+      float pm25_index = id(pm25_aqi).state;
+      float pm10_index = id(pm10_aqi).state;
+
+      // Neither reading is available
+      if (isnan(pm25_index) && isnan(pm10_index)) {
+        return NAN;
+      }
+
+      // Only PM2.5 available
+      if (isnan(pm10_index)) {
+        return pm25_index;
+      }
+
+      // Only PM10 available
+      if (isnan(pm25_index)) {
+        return pm10_index;
+      }
+
+      // Both available
+      // Highest pollutant sub-index determines AQI
+      if (pm25_index >= pm10_index) {
+        return pm25_index;
+      }
+
+      else {
+        return pm10_index;
+      }
+
+
+# ============================================================
+# AQI STATUS - HOME ASSISTANT
+# ============================================================
+
+text_sensor:
+
+  - platform: template
+    name: "AQI Status"
+    id: aqi_status
+
+    # Keep Home Assistant status synchronized
+    update_interval: 1s
+
+    lambda: |-
+
+      if (isnan(id(aqi).state)) {
+        return {"Scanning..."};
+      }
+
+      if (id(aqi).state <= 25) {
+        return {"EXCELLENT"};
+      }
+
+      else if (id(aqi).state <= 50) {
+        return {"GOOD"};
+      }
+
+      else if (id(aqi).state <= 100) {
+        return {"SATISFACTORY"};
+      }
+
+      else if (id(aqi).state <= 200) {
+        return {"MODERATE"};
+      }
+
+      else if (id(aqi).state <= 300) {
+        return {"POOR"};
+      }
+
+      else if (id(aqi).state <= 400) {
+        return {"VERY POOR"};
+      }
+
+      else {
+        return {"SEVERE"};
+      }
+
+
+# ============================================================
+# SCANNING ANIMATION TIMER
+# ============================================================
+
+interval:
+
+  - interval: 1s
+    then:
+
+      # Animate only while no valid AQI exists
+      - if:
+          condition:
+            lambda: 'return isnan(id(aqi).state);'
+
+          then:
+
+            - lambda: |-
+
+                id(scanning_step)++;
+
+                if (id(scanning_step) > 3) {
+                  id(scanning_step) = 1;
+                }
+
+
+# ============================================================
+# OLED DISPLAY
+# ============================================================
+
+display:
+
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    address: 0x3C
+    id: oled_display
+
+    # OLED refreshes every second
+    update_interval: 1s
+
+    lambda: |-
+
+      // ------------------------------------------------------
+      // TEMPERATURE
+      // ------------------------------------------------------
+
+      it.printf(
+        0, 0,
+        id(main_font),
+        "Temp: %.1f C",
+        id(temperature).state
+      );
+
+
+      // ------------------------------------------------------
+      // HUMIDITY
+      // ------------------------------------------------------
+
+      it.printf(
+        0, 16,
+        id(main_font),
+        "Hum: %.1f %%",
+        id(humidity).state
+      );
+
+
+      // ------------------------------------------------------
+      // AQI
+      // ------------------------------------------------------
+
+      if (isnan(id(aqi).state)) {
+
+        // No AQI yet
+        it.printf(
+          0, 32,
+          id(main_font),
+          "AQI: ---"
+        );
+
+
+        // ----------------------------------------------------
+        // SCANNING ANIMATION
+        // ----------------------------------------------------
+
+        if (id(scanning_step) == 1) {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "Scanning."
+          );
+
+        }
+
+        else if (id(scanning_step) == 2) {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "Scanning.."
+          );
+
+        }
+
+        else {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "Scanning..."
+          );
+
+        }
+
+      }
+
+      else {
+
+        // ----------------------------------------------------
+        // AQI VALUE
+        // ----------------------------------------------------
+
+        it.printf(
+          0, 32,
+          id(main_font),
+          "AQI: %.0f",
+          id(aqi).state
+        );
+
+
+        // ----------------------------------------------------
+        // IMMEDIATE AQI STATUS
+        // ----------------------------------------------------
+
+        if (id(aqi).state <= 25) {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "EXCELLENT"
+          );
+
+        }
+        
+        else if (id(aqi).state <= 50) {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "GOOD"
+          );
+
+        }
+
+        else if (id(aqi).state <= 100) {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "SATISFACTORY"
+          );
+
+        }
+
+        else if (id(aqi).state <= 200) {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "MODERATE"
+          );
+
+        }
+
+        else if (id(aqi).state <= 300) {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "POOR"
+          );
+
+        }
+
+        else if (id(aqi).state <= 400) {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "VERY POOR"
+          );
+
+        }
+
+        else {
+
+          it.printf(
+            0, 48,
+            id(main_font),
+            "SEVERE"
+          );
+
+        }
+
+      }
